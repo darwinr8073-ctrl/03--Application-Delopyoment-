@@ -1,0 +1,328 @@
+🧱 ARCHITECTURE (What you explain in viva)
+Developer
+   ↓
+GitHub (dev / main)
+   ↓
+Jenkins (CI/CD)
+   ↓
+Docker Build
+   ↓
+Docker Hub (dev & prod images)
+   ↓
+AWS EC2 Deployment
+   ↓
+Running React App (Port 80)
+   ↓
+Monitoring (Uptime Kuma)
+✅ STEP 1 — Launch AWS EC2
+
+Create EC2 instance:
+
+AMI → Amazon Linux 2
+
+Instance → t2.micro
+
+Key pair → create/download
+
+Security Group Rules
+Port	Purpose	Access
+22	SSH	My IP
+80	Website	Anywhere
+8080	Jenkins	My IP
+3001	Monitoring	My IP
+
+Connect:
+
+ssh -i key.pem ec2-user@EC2-PUBLIC-IP
+✅ STEP 2 — Update Server
+sudo yum update -y
+✅ STEP 3 — Install Required Tools
+Git
+sudo yum install git -y
+NodeJS (testing only)
+curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
+sudo yum install nodejs -y
+✅ STEP 4 — Install Docker
+sudo amazon-linux-extras install docker -y
+sudo systemctl start docker
+sudo systemctl enable docker
+
+Give permissions:
+
+sudo usermod -aG docker ec2-user
+
+Logout & reconnect SSH.
+
+Verify:
+
+docker ps
+✅ STEP 5 — Install Docker Compose
+sudo curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+-o /usr/local/bin/docker-compose
+
+sudo chmod +x /usr/local/bin/docker-compose
+
+Check:
+
+docker-compose version
+✅ STEP 6 — Clone Project
+git clone https://github.com/sriram-R-harshan/devops_build.git
+cd devops_build
+
+Test once:
+
+npm install
+npm start
+
+Open:
+
+http://EC2-IP:3000
+
+Stop → CTRL+C
+
+✅ STEP 7 — Create Production Dockerfile
+nano Dockerfile
+FROM node:18 AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=build /app/build /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+✅ STEP 8 — docker-compose.yml
+nano docker-compose.yml
+version: "3.9"
+services:
+  react-app:
+    build: .
+    ports:
+      - "80:80"
+    restart: always
+
+Run:
+
+docker-compose up --build -d
+
+Open:
+
+http://EC2-IP
+
+✅ App running on port 80.
+
+✅ STEP 9 — Bash Scripts
+build.sh
+#!/bin/bash
+IMAGE_NAME=$1
+docker build -t $IMAGE_NAME .
+deploy.sh
+#!/bin/bash
+IMAGE_NAME=$1
+docker pull $IMAGE_NAME
+docker stop react-app || true
+docker rm react-app || true
+docker run -d -p 80:80 --name react-app $IMAGE_NAME
+chmod +x build.sh deploy.sh
+✅ STEP 10 — Git Branch Setup
+git init
+git checkout -b dev
+git add .
+git commit -m "Initial setup"
+git push origin dev
+
+Branches:
+
+dev  → development
+main → production
+✅ STEP 11 — Docker Hub Setup
+
+Login:
+
+docker login
+
+Create repositories:
+
+yourname/react-dev   (public)
+yourname/react-prod  (private)
+✅ STEP 12 — Install Java (for Jenkins)
+sudo amazon-linux-extras enable corretto17
+sudo yum install java-17-amazon-corretto -y
+✅ STEP 13 — Install Jenkins (Amazon Linux)
+sudo wget -O /etc/yum.repos.d/jenkins.repo \
+https://pkg.jenkins.io/redhat-stable/jenkins.repo
+
+sudo rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+
+sudo yum install jenkins -y
+
+Start:
+
+sudo systemctl enable jenkins
+sudo systemctl start jenkins
+
+Open:
+
+http://EC2-IP:8080
+
+Password:
+
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+
+Install suggested plugins.
+
+✅ STEP 14 — Allow Jenkins to Use Docker ⭐
+sudo usermod -aG docker jenkins
+sudo systemctl restart docker
+sudo systemctl restart jenkins
+✅ STEP 15 — Jenkins Job (CI/CD)
+
+Create:
+
+New Item → Freestyle Project
+
+Git repo → your GitHub URL
+
+Branches:
+
+*/dev
+*/main
+
+Trigger:
+
+Poll SCM → H/2 * * * *
+Build Script (MERGE LOGIC)
+#!/bin/bash
+
+REPO_DEV=yourname/react-dev
+REPO_PROD=yourname/react-prod
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+docker build -t react-app .
+
+if [ "$BRANCH" = "dev" ]; then
+ docker tag react-app $REPO_DEV
+ docker push $REPO_DEV
+fi
+
+if [ "$BRANCH" = "main" ]; then
+ docker tag react-app $REPO_PROD
+ docker push $REPO_PROD
+
+ docker stop react-app || true
+ docker rm react-app || true
+ docker run -d -p 80:80 --name react-app $REPO_PROD
+fi
+✅ STEP 16 — MERGE WORKFLOW (VERY IMPORTANT)
+Developer pushes:
+git checkout dev
+git push origin dev
+
+✅ Jenkins:
+
+builds image
+
+pushes DEV image
+
+Create Pull Request (GitHub)
+dev → main
+
+Click Merge.
+
+✅ Jenkins automatically:
+
+builds PROD image
+
+pushes prod repo
+
+deploys container on EC2
+
+✅ STEP 17 — Monitoring (Health Check)
+Install Uptime Kuma
+docker run -d \
+--name uptime-kuma \
+-p 3001:3001 \
+louislam/uptime-kuma
+
+Open:
+
+http://EC2-IP:3001
+
+Add Monitor:
+
+Type → HTTP
+
+URL → http://EC2-IP
+
+Interval → 1 minute
+
+Shows:
+
+✅ UP / ❌ DOWN
+
+✅ STEP 18 — Final Verification
+Test DEV Flow
+
+Push → dev branch
+
+✔ build triggered
+✔ dev image pushed
+❌ no deployment
+
+Test PROD Flow
+
+Merge → main
+
+✔ build triggered
+✔ prod image pushed
+✔ auto deployment
+
+✅ STEP 19 — Submission Items
+
+Provide:
+
+✅ GitHub repo link
+✅ Website URL (EC2 IP)
+✅ Docker Hub dev image
+✅ Docker Hub prod image
+
+Screenshots:
+
+Jenkins dashboard
+
+Jenkins job config
+
+EC2 security group
+
+Running website
+
+Docker Hub images
+
+Monitoring dashboard (UP)
+
+✅ STEP 20 — FINAL FLOW (Explain in Viva)
+Developer Push
+      ↓
+GitHub (dev)
+      ↓
+Jenkins Build
+      ↓
+Docker Hub DEV Image
+
+Merge PR
+      ↓
+GitHub (main)
+      ↓
+Jenkins Pipeline
+      ↓
+Docker Hub PROD Image
+      ↓
+Auto Deploy EC2
+      ↓
+Monitoring Health Check
+🎯 THIS IS NOW A COMPLETE ACCEPTABLE PROJECT
+
+-----------xxx------------
